@@ -84,6 +84,8 @@ type client struct {
 	username string
 	password string
 
+	token string
+
 	client    *http.Client
 	baseURL   *url.URL
 	userAgent string
@@ -122,6 +124,11 @@ func NewClient(domain, username, password string, middleware ...MiddlewareFuncti
 	return NewURLClient(fmt.Sprintf("https://%s.zendesk.com", domain), username, password, middleware...)
 }
 
+// NewClientWithOAuthToken -
+func NewClientWithOAuthToken(domain, token string, middleware ...MiddlewareFunction) (Client, error) {
+	return NewURLClientWithOAuthToken(fmt.Sprintf("https://%s.zendesk.com", domain), token, middleware...)
+}
+
 // NewURLClient is like NewClient but accepts an explicit end point instead of a Zendesk domain.
 func NewURLClient(endpoint, username, password string, middleware ...MiddlewareFunction) (Client, error) {
 	baseURL, err := url.Parse(endpoint)
@@ -134,6 +141,30 @@ func NewURLClient(endpoint, username, password string, middleware ...MiddlewareF
 		userAgent: "Go-Zendesk",
 		username:  username,
 		password:  password,
+		reqFunc:   http.DefaultClient.Do,
+		headers:   make(map[string]string),
+	}
+
+	if middleware != nil {
+		for i := len(middleware) - 1; i >= 0; i-- {
+			c.reqFunc = middleware[i](c.reqFunc)
+		}
+	}
+
+	return c, nil
+}
+
+// NewURLClientWithOAuthToken -
+func NewURLClientWithOAuthToken(endpoint, token string, middleware ...MiddlewareFunction) (Client, error) {
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &client{
+		baseURL:   baseURL,
+		userAgent: "Go-Zendesk",
+		token:     token,
 		reqFunc:   http.DefaultClient.Do,
 		headers:   make(map[string]string),
 	}
@@ -174,7 +205,14 @@ func (c *client) request(method, endpoint string, headers map[string]string, bod
 		return nil, err
 	}
 
-	req.SetBasicAuth(c.username, c.password)
+	if c.username != "" && c.password != "" {
+		req.SetBasicAuth(c.username, c.password)
+	} else if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	} else {
+		return nil, errors.New("cannot authenticate - no username/password and no OAuth token")
+	}
+
 	req.Header.Set("User-Agent", c.userAgent)
 
 	for key, value := range c.headers {
